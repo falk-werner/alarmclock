@@ -7,6 +7,7 @@ use chrono::prelude::*;
 use mockall::predicate::*;
 use mockall::*;
 use std::io::*;
+use std::env;
 
 struct AlarmClock {
     display: Box<dyn Display>,
@@ -29,8 +30,8 @@ impl AlarmClock {
         self.display.print(&displayed_text);
     }
 
-    fn set_alarm(&mut self, alarm: DateTime<Local>) {
-        self.alarm = Some(alarm);
+    fn set_alarm(&mut self, alarm: Option<DateTime<Local>>) {
+        self.alarm = alarm;
     }
 }
 
@@ -54,7 +55,6 @@ mod test {
     use mockall::predicate::str::ends_with;
     use crate::AlarmClock;
     use crate::MockDisplay;
-    use mockall::predicate::*;
 
     #[test]
     fn test_alarm_clock() {
@@ -73,12 +73,18 @@ mod test {
         printer.expect_print().with(ends_with(" ALARM")).times(1).returning(|_| ());
 
         let mut alarm_clock = AlarmClock::new(Box::new(printer));
-        alarm_clock.set_alarm(now.clone());
+        alarm_clock.set_alarm(Some(now.clone()));
         alarm_clock.tick(now);
     }
 }
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    let alarm = if args.len() > 1 {
+        let time: NaiveTime = NaiveTime::parse_from_str(&args[1], "%H:%M:%S").unwrap();
+        Local::today().and_time(time)
+    } else { None };
+
     let mut event_loop: EventLoop<AlarmClock> =
         EventLoop::try_new().expect("Failed to initialize the event loop!");
 
@@ -87,6 +93,8 @@ fn main() {
 
     let printer: Console = Console {};
     let mut alarm_clock = AlarmClock::new(Box::new(printer));
+
+    alarm_clock.set_alarm(alarm);
 
     let timer_handle = source.handle();
     timer_handle.add_timeout(std::time::Duration::from_millis(500), 1);
