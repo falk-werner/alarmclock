@@ -15,11 +15,12 @@ use getch::{Getch};
 struct AlarmClock {
     display: Box<dyn Display>,
     alarm: Option<DateTime<Local>>,
+    signal: Option<calloop::LoopSignal>
 }
 
 impl AlarmClock {
-    fn new(display: Box<dyn Display>) -> Self {
-        Self { display: display, alarm: None}
+    fn new(display: Box<dyn Display>, signal: Option<calloop::LoopSignal>) -> Self {
+        Self { display: display, alarm: None, signal}
     }
 
     fn tick(&mut self, now: DateTime<Local>) {
@@ -40,6 +41,12 @@ impl AlarmClock {
     fn disable_alarm(&mut self) {
         self.alarm = None;
         self.display.clear();
+    }
+
+    fn stop(&mut self) {
+        if let Some(signal) = &self.signal {
+            signal.stop();
+        }
     }
 }
 
@@ -77,7 +84,7 @@ mod test {
     fn test_alarm_clock() {
         let mut printer = MockDisplay::new();
         printer.expect_print().times(1).returning(|_| ());
-        let mut alarm_clock = AlarmClock::new(Box::new(printer));
+        let mut alarm_clock = AlarmClock::new(Box::new(printer), None);
 
         alarm_clock.tick(Local::now());
     }
@@ -89,7 +96,7 @@ mod test {
 
         printer.expect_print().with(ends_with(" ALARM")).times(1).returning(|_| ());
 
-        let mut alarm_clock = AlarmClock::new(Box::new(printer));
+        let mut alarm_clock = AlarmClock::new(Box::new(printer), None);
         alarm_clock.set_alarm(Some(now.clone()));
         alarm_clock.tick(now);
     }
@@ -124,7 +131,7 @@ fn main() {
     let source = Timer::new().expect("Failed to create timer event source!");
 
     let printer: Console = Console {};
-    let mut alarm_clock = AlarmClock::new(Box::new(printer));
+    let mut alarm_clock = AlarmClock::new(Box::new(printer), Some(event_loop.get_signal()));
 
     alarm_clock.set_alarm(alarm);
 
@@ -140,12 +147,16 @@ fn main() {
 
     let (sender, receiver) : (Sender<u8>, Channel<u8>) = channel();
 
-    thread::spawn(move|| {
+    let join_handle = thread::spawn(move|| {
         let getch = Getch::new();
         loop {
             let key = getch.getch();
             if let Ok(code) = key {
-                sender.send(code).unwrap()
+                sender.send(code).unwrap();
+                if 113 == code
+                {
+                    return;
+                }
             }
         }        
     });
@@ -154,7 +165,10 @@ fn main() {
         match event {
             Event::Msg(10) => {
                 alarm_clock.disable_alarm();
-            }
+            },
+            Event::Msg(113) => {
+                alarm_clock.stop();
+            },
             _ => ()
         }
     }).expect("Failed to insert event source!");
@@ -167,4 +181,6 @@ fn main() {
             },
         )
         .expect("Error during event loop!");
+
+    join_handle.join().unwrap();
 }
