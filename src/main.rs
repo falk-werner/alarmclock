@@ -3,11 +3,14 @@ extern crate chrono;
 extern crate mockall;
 
 use calloop::{timer::Timer, EventLoop};
+use calloop::{channel::Channel, channel::Sender, channel::Event, channel::channel};
 use chrono::prelude::*;
 use mockall::predicate::*;
 use mockall::*;
 use std::io::*;
 use std::env;
+use std::thread;
+use getch::{Getch};
 
 struct AlarmClock {
     display: Box<dyn Display>,
@@ -33,11 +36,17 @@ impl AlarmClock {
     fn set_alarm(&mut self, alarm: Option<DateTime<Local>>) {
         self.alarm = alarm;
     }
+
+    fn disable_alarm(&mut self) {
+        self.alarm = None;
+        self.display.clear();
+    }
 }
 
 #[automock]
 trait Display {
     fn print(&self, now: &str);
+    fn clear(&self);
 }
 
 struct Console {}
@@ -45,6 +54,11 @@ struct Console {}
 impl Display for Console {
     fn print(&self, now: &str) {
         print!("\r{}", now);
+        std::io::stdout().flush().unwrap();
+    }
+
+    fn clear(&self) {
+        print!("\r                        \r");
         std::io::stdout().flush().unwrap();
     }
 }
@@ -56,6 +70,9 @@ mod test {
     use crate::AlarmClock;
     use crate::MockDisplay;
 
+    use std::sync::mpsc::channel;
+    use std::thread;
+    
     #[test]
     fn test_alarm_clock() {
         let mut printer = MockDisplay::new();
@@ -75,6 +92,21 @@ mod test {
         let mut alarm_clock = AlarmClock::new(Box::new(printer));
         alarm_clock.set_alarm(Some(now.clone()));
         alarm_clock.tick(now);
+    }
+
+    fn expensive_computation() -> u32 {
+        42
+    }
+
+    #[test]
+    fn test_channel() {
+        let (sender, receiver) = channel();
+
+        thread::spawn(move|| {
+            sender.send(expensive_computation()).unwrap();
+        });
+        
+        println!("{:?}", receiver.recv().unwrap());        
     }
 }
 
@@ -105,6 +137,27 @@ fn main() {
             timer_handle.add_timeout(std::time::Duration::from_millis(500), 1);
         })
         .expect("Failed to insert event source!");
+
+    let (sender, receiver) : (Sender<u8>, Channel<u8>) = channel();
+
+    thread::spawn(move|| {
+        let getch = Getch::new();
+        loop {
+            let key = getch.getch();
+            if let Ok(code) = key {
+                sender.send(code).unwrap()
+            }
+        }        
+    });
+
+    handle.insert_source(receiver, |event, _source_handle, alarm_clock| {
+        match event {
+            Event::Msg(10) => {
+                alarm_clock.disable_alarm();
+            }
+            _ => ()
+        }
+    }).expect("Failed to insert event source!");
 
     event_loop
         .run(
